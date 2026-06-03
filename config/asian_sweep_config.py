@@ -27,11 +27,11 @@ from types import MappingProxyType
 from typing import Mapping
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pair universe — verified 8 pairs from multi_pair_backtest.py v5
+# Pair universe — verified 13 pairs from multi_pair_backtest.py v5
 # ─────────────────────────────────────────────────────────────────────────────
 PAIRS: tuple[str, ...] = (
     "XAUUSD", "GBPUSD", "AUDUSD", "EURUSD",
-    "USDCAD", "USDCHF", "AUDCHF", "AUDNZD", "NZDUSD", "EURNZD", "GBPCAD", "GBPAUD", "HK50.cash", "GER40.cash",
+    "USDCAD", "USDCHF", "AUDCHF", "AUDNZD", "EURNZD", "GBPCAD", "GBPAUD", "HK50.cash", "GER40.cash",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,13 +169,7 @@ PAIR_CONFIG: Mapping[str, Mapping[str, object]] = MappingProxyType({
         "quality": 5, "category": "Cross", "jpy": False,
         "risk_override": None,
     }),
-    "NZDUSD": MappingProxyType({
-        "point": 0.00001, "contract_size": 100000.0, "lot_max": 50.0,
-        "spread_pts": 7, "sl_pts": 80,
-        "min_range_pts": 150, "max_range_pts": 1800,
-        "quality": 7, "category": "Major", "jpy": False,
-        "risk_override": None,
-    }),
+    # NZDUSD removed — slot-artifact (4 trades/yr, 1 trade = 55% of gross); synced with backtest
     "EURNZD": MappingProxyType({
         "point": 0.00001, "contract_size": 100000.0, "lot_max": 50.0,
         "spread_pts": 12, "sl_pts": 80,
