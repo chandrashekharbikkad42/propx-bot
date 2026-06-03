@@ -2,7 +2,8 @@
 
 Pinned to the verified V5 backtest (`multi_pair_backtest.py`, PF 2.27,
 239 trades). Each constant has at least one test; per-pair fields are
-parametrised over all 8 PAIRS.
+parametrised over all 14 PAIRS (8 original V5 majors/crosses/metal + 6
+extension pairs, two of which are index CFDs: HK50.cash, GER40.cash).
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ from config.asian_sweep_config import (
 
 ALL_PAIRS = list(PAIRS)
 
+# Symbol families — the 14-pair universe mixes plain FX/metal symbols with
+# index CFDs that follow a "<UPPER>.cash" convention and carry point=0.01.
+FX_PAIRS = [p for p in ALL_PAIRS if "." not in p]      # 6-char uppercase FX/metal
+INDEX_PAIRS = [p for p in ALL_PAIRS if "." in p]       # e.g. HK50.cash, GER40.cash
+FIVE_DP_PAIRS = [p for p in FX_PAIRS if p != "XAUUSD"] # 5-digit FX (point 0.00001)
+
 
 # ---------------------------------------------------------------------------
 # 1. PAIRS universe
@@ -40,8 +47,8 @@ class TestPairsUniverse:
     def test_pairs_is_tuple(self):
         assert isinstance(PAIRS, tuple)
 
-    def test_pairs_count_eight(self):
-        assert len(PAIRS) == 8
+    def test_pairs_count_fourteen(self):
+        assert len(PAIRS) == 14
 
     def test_pairs_unique(self):
         assert len(set(PAIRS)) == len(PAIRS)
@@ -52,15 +59,28 @@ class TestPairsUniverse:
     def test_pairs_no_whitespace(self):
         assert all(p.strip() == p for p in PAIRS)
 
-    def test_pairs_all_uppercase(self):
-        assert all(p.isupper() for p in PAIRS)
+    def test_fx_pairs_all_uppercase(self):
+        # FX/metal symbols are plain uppercase (e.g. EURUSD, XAUUSD).
+        assert all(p.isupper() for p in FX_PAIRS)
 
-    def test_pairs_all_six_chars(self):
-        assert all(len(p) == 6 for p in PAIRS)
+    def test_fx_pairs_all_six_chars(self):
+        assert all(len(p) == 6 for p in FX_PAIRS)
+
+    def test_index_pairs_format(self):
+        # Index CFDs follow "<UPPER>.cash" (e.g. HK50.cash, GER40.cash).
+        for p in INDEX_PAIRS:
+            base, _, suffix = p.partition(".")
+            assert base.isupper() and suffix == "cash", p
+
+    def test_index_pairs_present(self):
+        # Two index CFDs are part of the extension universe.
+        assert set(INDEX_PAIRS) == {"HK50.cash", "GER40.cash"}
 
     @pytest.mark.parametrize("expected", [
         "XAUUSD", "GBPUSD", "AUDUSD", "EURUSD",
         "USDCAD", "USDCHF", "AUDCHF", "AUDNZD",
+        "NZDUSD", "EURNZD", "GBPCAD", "GBPAUD",
+        "HK50.cash", "GER40.cash",
     ])
     def test_each_expected_pair_present(self, expected):
         assert expected in PAIRS
@@ -291,6 +311,16 @@ REQUIRED_KEYS = {
     "risk_override",
 }
 
+# Canonical key set — every PAIR_CONFIG entry must carry exactly these and
+# nothing else. Frozen here so a copy-paste from `multi_pair_backtest.SYMBOLS`
+# (which uses the legacy `min_r`/`max_r`/`cat` names) is rejected loudly.
+CANONICAL_KEYS = frozenset(REQUIRED_KEYS)
+
+# Legacy field names from the backtest dict. The detector reads the canonical
+# names with a direct subscript, so any of these slipping into PAIR_CONFIG is a
+# latent KeyError on the live scan path (and crashes the whole scan loop).
+LEGACY_KEYS = frozenset({"min_r", "max_r", "cat", "spread"})
+
 
 class TestPairConfigStructure:
     @pytest.mark.parametrize("pair", ALL_PAIRS)
@@ -341,7 +371,7 @@ class TestPairConfigStructure:
 
     @pytest.mark.parametrize("pair", ALL_PAIRS)
     def test_category_known(self, pair):
-        assert PAIR_CONFIG[pair]["category"] in {"Metal", "Major", "Cross"}
+        assert PAIR_CONFIG[pair]["category"] in {"Metal", "Major", "Cross", "Index"}
 
     @pytest.mark.parametrize("pair", ALL_PAIRS)
     def test_jpy_flag_bool(self, pair):
@@ -358,15 +388,22 @@ class TestPairConfigStructure:
 # ---------------------------------------------------------------------------
 
 EXPECTED_PAIR_VALUES = {
-    # pair       point     spread sl_pts min_r max_r quality category
-    "XAUUSD":   (0.01,     45,    70,    100,  3000, 10,     "Metal"),
-    "EURUSD":   (0.00001,   4,    80,    200,  2000,  9,     "Major"),
-    "AUDUSD":   (0.00001,   3,    80,    150,  1800,  9,     "Major"),
-    "GBPUSD":   (0.00001,   8,   100,    200,  2500,  8,     "Major"),
-    "USDCAD":   (0.00001,   5,    80,    150,  2000,  7,     "Major"),
-    "USDCHF":   (0.00001,   6,    80,    150,  2000,  7,     "Major"),
-    "AUDCHF":   (0.00001,   8,    80,    150,  1800,  5,     "Cross"),
-    "AUDNZD":   (0.00001,  12,    80,    150,  1800,  4,     "Cross"),
+    # pair         point    spread sl_pts min_r  max_r quality category
+    "XAUUSD":     (0.01,     45,    70,    100,   3000, 10,    "Metal"),
+    "EURUSD":     (0.00001,   4,    80,    200,   2000,  9,    "Major"),
+    "AUDUSD":     (0.00001,   3,    80,    150,   1800,  9,    "Major"),
+    "GBPUSD":     (0.00001,   8,   100,    200,   2500,  8,    "Major"),
+    "USDCAD":     (0.00001,   5,    80,    150,   2000,  7,    "Major"),
+    "USDCHF":     (0.00001,   6,    80,    150,   2000,  7,    "Major"),
+    "AUDCHF":     (0.00001,   8,    80,    150,   1800,  5,    "Cross"),
+    "AUDNZD":     (0.00001,  12,    80,    150,   1800,  4,    "Cross"),
+    # ── Extension pairs ────────────────────────────────────────────────
+    "NZDUSD":     (0.00001,   7,    80,    150,   1800,  7,    "Major"),
+    "EURNZD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
+    "GBPCAD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
+    "GBPAUD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
+    "HK50.cash":  (0.01,     50,  2000,    100,  30000,  9,    "Index"),
+    "GER40.cash": (0.01,     30,  2000,    100,  30000,  8,    "Index"),
 }
 
 
@@ -423,9 +460,14 @@ class TestPointFor:
     def test_xauusd_point(self):
         assert point_for("XAUUSD") == 0.01
 
-    @pytest.mark.parametrize("pair", [p for p in ALL_PAIRS if p != "XAUUSD"])
+    @pytest.mark.parametrize("pair", FIVE_DP_PAIRS)
     def test_5dp_pairs(self, pair):
         assert point_for(pair) == 0.00001
+
+    @pytest.mark.parametrize("pair", INDEX_PAIRS)
+    def test_index_pairs_point_001(self, pair):
+        # Index CFDs quote in 0.01 increments like XAUUSD, not 5-digit FX.
+        assert point_for(pair) == 0.01
 
     def test_unknown_raises(self):
         with pytest.raises(KeyError):
@@ -489,12 +531,20 @@ class TestQualityRanking:
     def test_usdcad_usdchf_same_quality(self):
         assert quality_for("USDCAD") == quality_for("USDCHF")
 
-    def test_majors_above_crosses(self):
-        majors = [p for p in ALL_PAIRS if PAIR_CONFIG[p]["category"] == "Major"]
-        crosses = [p for p in ALL_PAIRS if PAIR_CONFIG[p]["category"] == "Cross"]
-        assert min(quality_for(m) for m in majors) >= max(
-            quality_for(c) for c in crosses
+    def test_metal_outranks_every_other_pair(self):
+        # XAUUSD (10) is the single highest-quality symbol in the universe.
+        metals = [p for p in ALL_PAIRS if PAIR_CONFIG[p]["category"] == "Metal"]
+        others = [p for p in ALL_PAIRS if PAIR_CONFIG[p]["category"] != "Metal"]
+        assert min(quality_for(m) for m in metals) > max(
+            quality_for(o) for o in others
         )
+
+    def test_quality_within_1_10_band(self):
+        # NOTE: the old "all majors outrank all crosses" invariant no longer
+        # holds — extension crosses (EURNZD/GBPCAD/GBPAUD, q=8) outrank some
+        # majors (USDCAD/USDCHF/NZDUSD, q=7). Quality is a manual per-pair
+        # preference score, not a function of category in the 14-pair universe.
+        assert all(1 <= quality_for(p) <= 10 for p in ALL_PAIRS)
 
     def test_metals_top_quality(self):
         metals = [p for p in ALL_PAIRS if PAIR_CONFIG[p]["category"] == "Metal"]
@@ -520,3 +570,45 @@ class TestCrossInvariants:
         # collapses below the _MIN_RISK_PT_MULT * point guard for all sweeps.
         cfg_p = PAIR_CONFIG[pair]
         assert cfg_p["spread_pts"] < cfg_p["sl_pts"]
+
+
+# ---------------------------------------------------------------------------
+# 9. Schema consistency — every PAIR_CONFIG entry carries the canonical keys
+#
+# Regression guard for the min_r/max_r/cat drift: six pairs (NZDUSD, EURNZD,
+# GBPCAD, GBPAUD, HK50.cash, GER40.cash) were copy-pasted from
+# multi_pair_backtest.SYMBOLS with the backtest's legacy key names. The
+# detector reads cfg["min_range_pts"]/["max_range_pts"] with a direct
+# subscript, so those entries raised KeyError and — since scanner.scan() wraps
+# detect() in no try/except — crashed the entire scan during London/NY windows.
+#
+# These tests iterate PAIR_CONFIG directly (not the stale 8-pair ALL_PAIRS) so
+# they cover every pair actually shipped, regardless of the PAIRS count.
+# ---------------------------------------------------------------------------
+
+class TestSchemaConsistency:
+    @pytest.mark.parametrize("pair", list(PAIR_CONFIG.keys()))
+    def test_keys_exactly_canonical(self, pair):
+        # Exact match: catches both missing canonical keys AND stray extras.
+        assert set(PAIR_CONFIG[pair].keys()) == set(CANONICAL_KEYS), (
+            f"{pair} keys {set(PAIR_CONFIG[pair].keys())} "
+            f"!= canonical {set(CANONICAL_KEYS)}"
+        )
+
+    @pytest.mark.parametrize("pair", list(PAIR_CONFIG.keys()))
+    def test_no_legacy_backtest_keys(self, pair):
+        # Explicit, readable failure if a backtest-style name slips back in.
+        leaked = set(PAIR_CONFIG[pair].keys()) & set(LEGACY_KEYS)
+        assert not leaked, f"{pair} carries legacy backtest keys {leaked}"
+
+    def test_every_pair_has_identical_key_set(self):
+        # No drift between entries — all share one schema.
+        key_sets = {frozenset(v.keys()) for v in PAIR_CONFIG.values()}
+        assert len(key_sets) == 1, f"PAIR_CONFIG entries disagree on keys: {key_sets}"
+
+    @pytest.mark.parametrize("pair", list(PAIR_CONFIG.keys()))
+    def test_range_filter_readable_by_detector(self, pair):
+        # Direct subscript mirrors AsianSweepDetector.detect — must not raise.
+        cfg_p = PAIR_CONFIG[pair]
+        assert float(cfg_p["min_range_pts"]) > 0
+        assert float(cfg_p["max_range_pts"]) > float(cfg_p["min_range_pts"])
