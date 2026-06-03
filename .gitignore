@@ -1,0 +1,60 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Virtual env
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code (local-only harness config)
+.claude/settings.local.json
+.claude/*.local.json
+
+# Logs
+logs/
+*.log
+
+# Market data
+data/ticks/
+data/replays/
+data/cache/
+*.parquet
+*.feather
+
+# Backtest output
+backtesting/results/
+analytics/output/
+
+# Testing
+.pytest_cache/
+.coverage
+.mypy_cache/
+
+# OS
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# Temp
+tmp/
+temp/
+*.tmp
+*.bak

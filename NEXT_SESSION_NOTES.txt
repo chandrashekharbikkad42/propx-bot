@@ -1,0 +1,27 @@
+﻿=== V5 BOT — DEPLOY READY ===
+14 pairs | +288%/yr backtest | PF 3.15 | MDD 3.9%
+
+SAFETY (all wired + verified):
+- MIN_SL_DISTANCE_PIPS=5.0 (tiny-SL trade reject)
+- MAX_RISK_USD_PER_TRADE=150 (hard $ cap, no 400-500 SL possible)
+- MAX_TOTAL_DD_PCT=8.0 (kill switch below prop 10%)
+- MAX_DAILY_DD_PCT=3.0 + MAX_TRADES_PER_DAY=2 + concurrency=1
+- Telegram alerts working (SSL fixed via certifi)
+
+DEPLOY COMMAND (after VPS ready):
+  python scripts/run_asian_sweep_live.py --no-dry-run
+
+TODO before live:
+1. Revoke Telegram token again (leaked in screenshots) - BotFather /revoke
+2. Get VPS (ForexVPS Core plan ~Rs3064/mo) - Windows, 4GB RAM
+3. Copy project to VPS, pip install -r requirements.txt
+4. Run dry-run --once to verify, then --no-dry-run
+
+PLAN:
+- Week 1-2: demo on VPS, monitor via Telegram
+- Confirm live PF ~ backtest, DD safe
+- Then: 5k funded account, shift bot (change MT5 login only)
+
+14 pairs: XAUUSD GBPUSD AUDUSD EURUSD USDCAD USDCHF AUDCHF AUDNZD
+  NZDUSD EURNZD GBPCAD GBPAUD HK50.cash GER40.cash
+Backups: config/asian_sweep_config.py.bak
