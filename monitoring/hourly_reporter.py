@@ -56,6 +56,14 @@ from monitoring.daily_tracker import DailyTracker
 
 IST_OFFSET = timedelta(hours=5, minutes=30)
 HOUR_MS = 60 * 60 * 1000
+MINUTE_MS = 60 * 1000
+
+# Status-report cadence. Historically the digest fired once per hour; the
+# operator wanted a tighter pulse, so the default is now every 15 minutes.
+# Configurable end-to-end: run_periodic takes interval_ms, and the live
+# runner exposes --report-interval-min. next_top_of_hour_ms stays as the
+# hour-aligned special case for callers/tests that still want it.
+DEFAULT_REPORT_INTERVAL_MS = 15 * MINUTE_MS
 
 
 # ----------------------------------------------------------------- stats
@@ -103,11 +111,23 @@ class HourlyStats:
 # ----------------------------------------------------------------- helpers
 
 
+def next_tick_ms(
+    now_msc: int, interval_ms: int = DEFAULT_REPORT_INTERVAL_MS
+) -> int:
+    """Return the next interval-aligned ms boundary strictly after now_msc.
+
+    Boundaries are aligned to the UTC epoch, so a 15-minute interval fires at
+    :00/:15/:30/:45. Advances even when now is already exactly on a boundary
+    so the loop never busy-waits on a zero-length sleep.
+    """
+    interval_ms = max(1, int(interval_ms))
+    rem = now_msc % interval_ms
+    return now_msc + (interval_ms - rem) if rem else now_msc + interval_ms
+
+
 def next_top_of_hour_ms(now_msc: int) -> int:
     """Return the ms timestamp of the next HH:00:00 UTC (>= now+1ms)."""
-    # Compute remainder via integer math; advance even when already exact.
-    return now_msc + (HOUR_MS - (now_msc % HOUR_MS)) if (now_msc % HOUR_MS) \
-        else now_msc + HOUR_MS
+    return next_tick_ms(now_msc, HOUR_MS)
 
 
 def _ist_hhmm(now_msc: int) -> str:
@@ -245,11 +265,14 @@ class HourlyReporter:
         stop_event: asyncio.Event,
         *,
         clock_ms,  # callable returning current epoch-ms; injected for tests
+        interval_ms: int = DEFAULT_REPORT_INTERVAL_MS,
     ) -> None:
-        """Sleep until next top-of-hour, send, repeat — until stop_event."""
+        """Sleep until the next interval boundary, send, repeat — until
+        stop_event. Defaults to a 15-minute cadence; pass interval_ms to
+        change it (the live runner derives this from --report-interval-min)."""
         while not stop_event.is_set():
             now = clock_ms()
-            next_ms = next_top_of_hour_ms(now)
+            next_ms = next_tick_ms(now, interval_ms)
             wait_s = max(0.0, (next_ms - now) / 1000.0)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=wait_s)

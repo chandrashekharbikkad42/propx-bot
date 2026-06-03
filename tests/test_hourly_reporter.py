@@ -23,8 +23,10 @@ from execution.order_router import GriffOpenPosition
 from execution.position_manager import GriffPositionManager
 from monitoring.daily_tracker import DailyTracker
 from monitoring.hourly_reporter import (
+    DEFAULT_REPORT_INTERVAL_MS,
     HourlyReporter,
     HourlyStats,
+    next_tick_ms,
     next_top_of_hour_ms,
 )
 from strategy.patterns.base import Direction
@@ -309,6 +311,67 @@ class TestNextTopOfHour(unittest.TestCase):
         msc = _utc_msc(2026, 5, 18, 0, 0, 0)
         nxt = next_top_of_hour_ms(msc)
         self.assertEqual(nxt - msc, 60 * 60 * 1000)
+
+
+class TestNextTick(unittest.TestCase):
+    def test_default_interval_is_15_minutes(self):
+        self.assertEqual(DEFAULT_REPORT_INTERVAL_MS, 15 * 60 * 1000)
+
+    def test_15min_rounds_up_to_next_quarter(self):
+        # 18:07 → next :15 boundary is 18:15 (8 minutes away).
+        msc = _utc_msc(2026, 5, 18, 18, 7, 0)
+        nxt = next_tick_ms(msc, 15 * 60 * 1000)
+        self.assertEqual(nxt - msc, 8 * 60 * 1000)
+
+    def test_on_boundary_advances_a_full_interval(self):
+        # Exactly on a :15 boundary → advance one full interval, never 0.
+        msc = _utc_msc(2026, 5, 18, 18, 15, 0)
+        nxt = next_tick_ms(msc, 15 * 60 * 1000)
+        self.assertEqual(nxt - msc, 15 * 60 * 1000)
+
+    def test_default_arg_uses_15min_cadence(self):
+        msc = _utc_msc(2026, 5, 18, 18, 0, 0)
+        self.assertEqual(next_tick_ms(msc) - msc, 15 * 60 * 1000)
+
+    def test_top_of_hour_is_hour_aligned_next_tick(self):
+        # Backward-compat: next_top_of_hour_ms == next_tick_ms at HOUR_MS.
+        msc = _utc_msc(2026, 5, 18, 18, 30, 0)
+        self.assertEqual(
+            next_top_of_hour_ms(msc), next_tick_ms(msc, 60 * 60 * 1000)
+        )
+
+
+class TestRunPeriodicCadence(unittest.IsolatedAsyncioTestCase):
+    async def test_run_periodic_honors_custom_interval(self):
+        n = _notifier_mock()
+        daily = _daily_tracker()
+        pm = _position_mgr_with([])
+        stats = HourlyStats()
+        r = HourlyReporter(
+            notifier=n, daily=daily, position_mgr=pm,
+            stats=stats, num_pairs=6, daily_loss_cap_pct=5.0,
+        )
+        # Clock fixed just before a :15 boundary; a 15-min interval means the
+        # scheduler waits < 1s, sends once, then the stop event halts it.
+        base = _utc_msc(2026, 5, 18, 18, 14, 59) + 500  # 0.5s before :15
+        stop = asyncio.Event()
+        sends: list[int] = []
+
+        orig_send = r.send
+
+        async def _counting_send(now_msc: int) -> bool:
+            sends.append(now_msc)
+            stop.set()  # one tick is enough for this test
+            return await orig_send(now_msc)
+
+        r.send = _counting_send
+        await asyncio.wait_for(
+            r.run_periodic(
+                stop, clock_ms=lambda: base, interval_ms=15 * 60 * 1000,
+            ),
+            timeout=2.0,
+        )
+        self.assertEqual(len(sends), 1)
 
 
 if __name__ == "__main__":

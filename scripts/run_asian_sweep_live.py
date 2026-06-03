@@ -93,7 +93,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                    help="Auto-stop after N (e.g. '5min', '2h', '90s'). Smoke-test only.")
     p.add_argument("--starting-equity", type=float, default=10_000.0)
     p.add_argument("--no-hourly", dest="hourly", action="store_false",
-                   default=True, help="Disable hourly Telegram status digests.")
+                   default=True, help="Disable periodic Telegram status digests.")
+    p.add_argument("--report-interval-min", type=float, default=15.0,
+                   help="Status digest cadence in minutes (default 15).")
     p.add_argument("--poll-sec", type=float, default=30.0,
                    help="LIVE bar-poll interval (default 30s). LIVE mode only.")
     p.add_argument("--history-bars", type=int, default=DEFAULT_HISTORY_BARS,
@@ -371,12 +373,17 @@ async def main_async(args: argparse.Namespace) -> int:
         bg_tasks: list[asyncio.Task] = []
         if reporter is not None:
             import time as _time
+            report_interval_ms = max(1, int(args.report_interval_min * 60_000))
             bg_tasks.append(asyncio.create_task(
                 reporter.run_periodic(
                     stop, clock_ms=lambda: int(_time.time() * 1000),
+                    interval_ms=report_interval_ms,
                 )
             ))
-            logger.info("AsianSweepLive HourlyReporter scheduled")
+            logger.info(
+                f"AsianSweepLive status reporter scheduled "
+                f"(every {args.report_interval_min:g}m)"
+            )
 
         # ── Console dashboard ──────────────────────────────────────────
         # Display-only — pulls from pm/daily/(optional)MT5. Refresh cadence
