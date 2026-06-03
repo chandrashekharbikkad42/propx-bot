@@ -47,7 +47,7 @@ from execution.order_router import (
     GriffPendingOrder,
 )
 from execution.position_manager import GriffPositionManager
-from monitoring.daily_tracker import DailyTracker
+from monitoring.daily_tracker import DailyTracker, ist_trade_day
 from monitoring.telegram_alerts import GriffTelegramAlerts
 from monitoring.hourly_reporter import HourlyStats
 from risk.asian_sweep_exit import size_position as _asian_sweep_size_position
@@ -187,6 +187,15 @@ class AsianSweepLiveEngine:
         # on the first cycle (None ⇒ adopt the first equity we see). Drives
         # the MAX_TOTAL_DD_PCT kill switch in process_scan_cycle.
         self._equity_hwm: Optional[float] = None
+        # V5 trade-admission ledger — mirrors the backtest's daily picker:
+        #   - one open position per symbol at a time (no pyramiding);
+        #   - max 1 trade per (symbol, direction) per IST trade-day
+        #     ("1 per direction/day").
+        # The daily 2-trade cap stays owned by the daily_trade_cap_reached gate
+        # below / HouseMoneyManager — this ledger is the per-direction layer.
+        # Reset on IST day-roll at the top of process_scan_cycle.
+        self._traded_today: set[tuple[str, Direction]] = set()
+        self._traded_today_day: Optional[str] = None
 
     @property
     def hourly_stats(self) -> Optional[HourlyStats]:
@@ -205,6 +214,12 @@ class AsianSweepLiveEngine:
     ) -> CycleReport:
         """Run the scanner once and place orders for allowed signals."""
         report = CycleReport(now_msc=now_msc)
+        # Roll the per-direction/day ledger when the IST trade-day changes so
+        # "1 per direction/day" resets at the same boundary DailyTracker uses.
+        trade_day = ist_trade_day(now_msc)
+        if self._traded_today_day != trade_day:
+            self._traded_today_day = trade_day
+            self._traded_today.clear()
         if self._stats is not None:
             for pair, bars in bar_feeds.items():
                 if bars:
@@ -282,6 +297,46 @@ class AsianSweepLiveEngine:
                 await _safe_alert(
                     self._alerts.kill_switch_triggered,
                     f"{symbol} {signal.pattern_name}: news_blackout",
+                )
+                continue
+
+            # V5 admission gate #1 — no pyramiding. If we already hold an open
+            # position on this symbol, skip; the backtest only ever runs one
+            # position per symbol at a time. result.price=0.0 fills still land
+            # in the position map with the recovered entry, so this is honest.
+            if self._pm.positions_for(symbol):
+                report.signals_rejected_by_compliance += 1
+                report.rejections.append(
+                    (f"{symbol}:{signal.pattern_name}", "open_position_exists")
+                )
+                logger.info(
+                    f"ASIAN_SWEEP open_position_exists SKIP {symbol} "
+                    f"{signal.pattern_name}"
+                )
+                await _safe_alert(
+                    self._alerts.kill_switch_triggered,
+                    f"{symbol} {signal.pattern_name}: open_position_exists",
+                )
+                continue
+
+            # V5 admission gate #2 — 1 trade per (symbol, direction) per day.
+            # Mirrors the backtest's "max 1 per direction" daily picker so a
+            # repeated same-direction signal can't open a second order.
+            dir_key = (symbol, signal.direction)
+            if dir_key in self._traded_today:
+                report.signals_rejected_by_compliance += 1
+                report.rejections.append(
+                    (f"{symbol}:{signal.pattern_name}",
+                     "direction_already_traded_today")
+                )
+                logger.info(
+                    f"ASIAN_SWEEP direction_already_traded_today SKIP {symbol} "
+                    f"{signal.direction.value} {signal.pattern_name}"
+                )
+                await _safe_alert(
+                    self._alerts.kill_switch_triggered,
+                    f"{symbol} {signal.pattern_name}: "
+                    f"direction_already_traded_today",
                 )
                 continue
 
@@ -391,6 +446,7 @@ class AsianSweepLiveEngine:
                 self._pm.register_pending(pending)
 
             self._daily.record_trade_open(now_ms=now_msc)
+            self._traded_today.add(dir_key)
             report.orders_placed += 1
 
         return report

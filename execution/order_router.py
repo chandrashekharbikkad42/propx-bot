@@ -166,7 +166,19 @@ class GriffOrderRouter:
         }
         result = await self._send_with_retry(request, label="market")
         ticket = _ticket_from_result(result)
-        fill_price = float(getattr(result, "price", price))
+        fill_price = float(getattr(result, "price", price) or 0.0)
+        # Some brokers return result.price == 0.0 on a market DEAL — the actual
+        # fill price only materialises on the resulting position, not on the
+        # send result. Recover it from positions_get so downstream PnL / SL
+        # math is anchored to the real entry instead of a bogus 0.0. Falls back
+        # to the requested quote if MT5 has nothing usable for us.
+        if fill_price <= 0.0:
+            resolved = await self._fill_price_from_position(ticket, signal.symbol)
+            fill_price = resolved if resolved > 0.0 else float(price)
+            logger.warning(
+                f"PROPX MARKET result.price=0.0 {signal.symbol} {side.value}; "
+                f"recovered entry={fill_price} (ticket={ticket})"
+            )
         # Bug-fix: record the actual filled volume (not the requested lots) so
         # downstream position bookkeeping reflects the broker's true holding.
         # Partial fills (volume < requested) were silently mis-bookkept before.
@@ -183,6 +195,31 @@ class GriffOrderRouter:
             opened_msc=now_msc, signal_id=signal.pattern_name + ":" + position_id[:8],
             pattern_name=signal.pattern_name,
         )
+
+    async def _fill_price_from_position(self, ticket: int, symbol: str) -> float:
+        """Resolve a market fill price from MT5's open positions.
+
+        Used when `order_send` returns result.price == 0.0. Tries the exact
+        position ticket first, then any open position on the symbol. Returns
+        0.0 if MT5 is unavailable or has no usable price_open so the caller
+        can fall back to the requested quote.
+        """
+        if mt5 is None:  # pragma: no cover — dry_run never reaches here
+            return 0.0
+        try:
+            positions = await asyncio.to_thread(mt5.positions_get, ticket=ticket)
+            if not positions:
+                positions = await asyncio.to_thread(
+                    mt5.positions_get, symbol=symbol,
+                )
+        except Exception as exc:  # noqa: BLE001 — must not break trading loop
+            logger.warning(f"positions_get failed resolving fill price: {exc}")
+            return 0.0
+        for p in positions or ():
+            price_open = float(getattr(p, "price_open", 0.0) or 0.0)
+            if price_open > 0.0:
+                return price_open
+        return 0.0
 
     async def place_pending_stop(
         self,

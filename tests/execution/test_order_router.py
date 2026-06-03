@@ -179,6 +179,73 @@ class TestPlaceMarketMocked:
 
 
 # ===========================================================================
+# 4b. place_market — result.price=0.0 recovered from positions_get
+# ===========================================================================
+
+class TestPlaceMarketZeroPriceRecovery:
+    def test_zero_price_recovered_by_ticket(self, patch_router_mt5):
+        """Broker returns result.price=0.0 on the DEAL → the router must pull
+        the real entry from positions_get(ticket=...) instead of booking 0.0."""
+        from tests.execution.fixtures.mock_mt5 import PositionInfo
+        m = patch_router_mt5
+        m.queue_result(retcode=TRADE_RETCODE_DONE, order=555, price=0.0)
+        m.positions = [PositionInfo(ticket=555, symbol="EURUSD",
+                                    volume=0.1, price_open=1.10037)]
+        r = GriffOrderRouter(dry_run=False)
+        pos = run(r.place_market(make_signal(), lots=0.1,
+                                  ask=1.10010, bid=1.10000, now_msc=0))
+        assert pos.mt5_ticket == 555
+        assert pos.entry_price == pytest.approx(1.10037)
+
+    def test_zero_price_recovered_by_symbol_when_ticket_absent(
+            self, patch_router_mt5):
+        """If positions_get(ticket=...) is empty, fall back to the symbol
+        lookup and use that position's price_open."""
+        from tests.execution.fixtures.mock_mt5 import PositionInfo
+        m = patch_router_mt5
+        m.queue_result(retcode=TRADE_RETCODE_DONE, order=777, price=0.0)
+        # No position carries ticket 777; one exists on the symbol.
+        m.positions = [PositionInfo(ticket=999, symbol="EURUSD",
+                                    volume=0.1, price_open=1.09988)]
+        r = GriffOrderRouter(dry_run=False)
+        pos = run(r.place_market(make_signal(), lots=0.1,
+                                  ask=1.10010, bid=1.10000, now_msc=0))
+        assert pos.entry_price == pytest.approx(1.09988)
+
+    def test_zero_price_falls_back_to_quote_when_no_position(
+            self, patch_router_mt5):
+        """If MT5 has no usable position at all, the requested quote is used
+        rather than booking a 0.0 entry."""
+        m = patch_router_mt5
+        m.queue_result(retcode=TRADE_RETCODE_DONE, order=888, price=0.0)
+        m.positions = []
+        r = GriffOrderRouter(dry_run=False)
+        pos = run(r.place_market(make_signal(), lots=0.1,
+                                  ask=1.10010, bid=1.10000, now_msc=0))
+        # BUY → quote is the ask.
+        assert pos.entry_price == pytest.approx(1.10010)
+
+    def test_nonzero_price_does_not_query_positions(self, patch_router_mt5):
+        """A normal non-zero fill price must NOT touch positions_get — the
+        recovery path is strictly for the 0.0 case."""
+        m = patch_router_mt5
+        m.queue_result(retcode=TRADE_RETCODE_DONE, order=111, price=1.10005)
+        calls = {"n": 0}
+        orig = m.positions_get
+
+        def _counting(*a, **k):
+            calls["n"] += 1
+            return orig(*a, **k)
+
+        m.positions_get = _counting
+        r = GriffOrderRouter(dry_run=False)
+        pos = run(r.place_market(make_signal(), lots=0.1,
+                                  ask=1.10010, bid=1.10000, now_msc=0))
+        assert pos.entry_price == pytest.approx(1.10005)
+        assert calls["n"] == 0
+
+
+# ===========================================================================
 # 5. place_market — non-transient retcode raises
 # ===========================================================================
 

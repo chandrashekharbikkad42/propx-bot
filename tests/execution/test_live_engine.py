@@ -75,6 +75,11 @@ def engine_factory():
         pm = MagicMock()
         pm.register_position = MagicMock()
         pm.register_pending = MagicMock()
+        # Default: no open positions on any symbol. A bare MagicMock would be
+        # truthy and trip the no-pyramiding guard for every signal, so pin it
+        # to an empty tuple. Tests that exercise the open-position skip
+        # override this on the returned mock.
+        pm.positions_for = MagicMock(return_value=())
 
         compliance = MagicMock()
         compliance.can_trade = MagicMock(
@@ -593,6 +598,95 @@ class TestEdgeCases:
             account=_acc(),
         ))
         assert rep.orders_placed == 1
+
+
+# ===========================================================================
+# 14b. V5 admission gates — no-pyramiding + 1-per-direction/day
+# ===========================================================================
+
+class TestAdmissionGates:
+    def test_open_position_blocks_signal(self, engine_factory):
+        """An existing open position on the symbol → skip (no pyramiding)."""
+        sig = make_signal(pattern_name="ASIAN_SWEEP", symbol="EURUSD")
+        engine, mocks = engine_factory(scan_signals=[sig])
+        mocks["pm"].positions_for = MagicMock(
+            return_value=(make_griff_open(symbol="EURUSD"),)
+        )
+        rep = run(engine.process_scan_cycle(
+            bar_feeds={"EURUSD": []},
+            now_msc=1_700_000_000_000,
+            ask_by_pair={"EURUSD": 1.10010},
+            bid_by_pair={"EURUSD": 1.10000},
+            account=_acc(),
+        ))
+        assert rep.orders_placed == 0
+        assert rep.signals_rejected_by_compliance == 1
+        assert rep.rejections[0][1] == "open_position_exists"
+        mocks["router"].place_market.assert_not_awaited()
+
+    def test_second_same_direction_signal_blocked(self, engine_factory):
+        """Same symbol/direction signal on a later cycle → 2nd order blocked
+        with a direction rejection reason ("1 per direction/day")."""
+        sig = make_signal(pattern_name="ASIAN_SWEEP", symbol="EURUSD",
+                          direction=Direction.BUY)
+        engine, mocks = engine_factory(scan_signals=[sig])
+        common = dict(
+            bar_feeds={"EURUSD": []},
+            now_msc=1_700_000_000_000,
+            ask_by_pair={"EURUSD": 1.10010},
+            bid_by_pair={"EURUSD": 1.10000},
+            account=_acc(),
+        )
+        # Cycle 1 — opens the EURUSD LONG, records the direction.
+        rep1 = run(engine.process_scan_cycle(**common))
+        assert rep1.orders_placed == 1
+        # Cycle 2 — identical signal. PM still reports no open position (mock),
+        # so the block must come from the per-direction/day ledger.
+        rep2 = run(engine.process_scan_cycle(**common))
+        assert rep2.orders_placed == 0
+        assert rep2.signals_rejected_by_compliance == 1
+        assert rep2.rejections[0][1] == "direction_already_traded_today"
+        # Only the first cycle reached the router.
+        mocks["router"].place_market.assert_awaited_once()
+
+    def test_opposite_direction_still_allowed_same_day(self, engine_factory):
+        """1-per-direction is per (symbol, direction): a LONG then a SHORT on
+        the same symbol/day are both admissible (the 2-trade cap, not this
+        gate, is what limits the day)."""
+        engine, mocks = engine_factory(scan_signals=[])
+        long_sig = make_signal(symbol="EURUSD", direction=Direction.BUY)
+        short_sig = make_signal_sell(symbol="EURUSD")
+        common = dict(
+            bar_feeds={"EURUSD": []},
+            now_msc=1_700_000_000_000,
+            ask_by_pair={"EURUSD": 1.10010},
+            bid_by_pair={"EURUSD": 1.10000},
+            account=_acc(),
+        )
+        mocks["scanner"].scan_all = MagicMock(return_value=(long_sig,))
+        assert run(engine.process_scan_cycle(**common)).orders_placed == 1
+        mocks["scanner"].scan_all = MagicMock(return_value=(short_sig,))
+        assert run(engine.process_scan_cycle(**common)).orders_placed == 1
+
+    def test_direction_ledger_resets_next_ist_day(self, engine_factory):
+        """The per-direction ledger rolls with the IST trade-day, so the same
+        direction is tradable again the next day."""
+        sig = make_signal(symbol="EURUSD", direction=Direction.BUY)
+        engine, mocks = engine_factory(scan_signals=[sig])
+        # Day 1.
+        d1 = run(engine.process_scan_cycle(
+            bar_feeds={"EURUSD": []}, now_msc=1_700_000_000_000,
+            ask_by_pair={"EURUSD": 1.10010}, bid_by_pair={"EURUSD": 1.10000},
+            account=_acc(),
+        ))
+        assert d1.orders_placed == 1
+        # +1 day in ms — a fresh IST trade-day.
+        d2 = run(engine.process_scan_cycle(
+            bar_feeds={"EURUSD": []}, now_msc=1_700_000_000_000 + 86_400_000,
+            ask_by_pair={"EURUSD": 1.10010}, bid_by_pair={"EURUSD": 1.10000},
+            account=_acc(),
+        ))
+        assert d2.orders_placed == 1
 
 
 # ===========================================================================

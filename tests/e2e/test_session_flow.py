@@ -247,13 +247,18 @@ class TestLondonThenNYSameDay:
         r.run_cycle({pair: []}, now_msc=s1.bar_time_msc,
                     ask_by_pair={pair: s1.entry},
                     bid_by_pair={pair: s1.entry})
-        # NY trade hours later.
-        s2 = _sig(pair, hour=13)
+        # NY trade hours later. The second trade is on a DIFFERENT pair: V5 now
+        # blocks a 2nd order on a symbol that still has an open position
+        # (no pyramiding) and a 2nd same-direction order on the same symbol/day
+        # (1 per direction/day). A distinct pair sidesteps both guards, so the
+        # 2-trade/day cap is still what governs admission here.
+        other = next(p for p in PAIRS if p != pair)
+        s2 = _sig(other, hour=13)
         _inject(r, [s2])
         acct = r.account_with(trades_today=1)
-        r.run_cycle({pair: []}, now_msc=s2.bar_time_msc,
-                    ask_by_pair={pair: s2.entry},
-                    bid_by_pair={pair: s2.entry}, account=acct)
+        r.run_cycle({other: []}, now_msc=s2.bar_time_msc,
+                    ask_by_pair={other: s2.entry},
+                    bid_by_pair={other: s2.entry}, account=acct)
         # Both pass compliance (cap is 2), so 2 positions open.
         assert len(r.pm.open_positions) == 2
 
@@ -348,6 +353,11 @@ class TestMultiDaySequence:
         # Force rollover to Wednesday April 15.
         r.daily.update_equity(100_000.0, now_ms=hour_msc(2026, 4, 14, 20))
         assert r.daily.trade_count == 0
+        # Day-1 position closes out before day 2 (SL/TP/EOD). Forget it so the
+        # new no-pyramiding guard doesn't carry yesterday's open position into
+        # today and block an otherwise-fresh same-pair entry.
+        for p in list(r.pm.open_positions):
+            r.pm.forget_position(p.position_id)
         # Day 2 trade.
         s2 = _sig("EURUSD", hour=8, day=15)
         _inject(r, [s2])
