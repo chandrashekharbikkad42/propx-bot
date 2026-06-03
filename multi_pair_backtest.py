@@ -85,9 +85,7 @@ SYMBOLS = {
     "AUDCHF": {"spread":  8,  "point": 0.00001, "contract": 100000.0, "lot_max": 50.0,
                "sl_pts": 80,  "min_r": 150, "max_r": 1800, "quality": 5,  "cat": "Cross",
                "jpy": False,  "risk_override": None},
-    "NZDUSD": {"spread":  7,  "point": 0.00001, "contract": 100000.0, "lot_max": 50.0,
-             "sl_pts": 80,  "min_r": 150, "max_r": 1800, "quality": 7,  "cat": "Major",
-             "jpy": False,  "risk_override": None},
+    # NZDUSD removed — only 4 trades/yr (slot-starved), top trade = 55% of gross (noise)
     "EURNZD": {"spread": 12, "point": 0.00001, "contract": 100000.0, "lot_max": 50.0,
              "sl_pts": 80,  "min_r": 150, "max_r": 1800, "quality": 8,  "cat": "Cross",
              "jpy": False,  "risk_override": None},
@@ -304,7 +302,7 @@ def simulate(df, sig, du, balance, rp, cfg):
 def run():
     print("\n" + "="*65)
     print("  MULTI-PAIR Asian Range London Sweep — Backtest v5")
-    print(f"  8 pairs | 0.8% risk | XAUUSD=0.5% | DD circuit {MAX_DAILY_DD}%")
+    print(f"  {len(SYMBOLS)} pairs | {RISK_PER_TRADE}% risk | XAUUSD={SYMBOLS['XAUUSD']['risk_override']}% | DD circuit {MAX_DAILY_DD}%")
     print("="*65)
 
     if not connect_mt5():
