@@ -17,10 +17,31 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from config.asian_sweep_config import PAIR_CONFIG
 from data.bar_aggregator import Bar
 
 
 UTC = timezone.utc
+
+
+def baseline_low(pair: str) -> float:
+    """Realistic Asian-low baseline matched to a pair's price scale.
+
+    The detector builds SL = trigger.low - sl_pts * pt. Indices carry a huge
+    buffer (sl_pts=2000, pt=0.01 → 20 index points) so an FX-style ~1.10
+    baseline drives SL below zero and trips
+    PatternSignal.__post_init__ ("entry, sl, tp must all be positive").
+    Anchoring each instrument class to its real price scale keeps the synthetic
+    Asian levels and the derived SL/TP strictly positive. XAUUSD (100.0) and
+    5-digit FX (1.10000) baselines are preserved exactly so existing
+    assertions are unaffected; only index instruments get a realistic scale.
+    """
+    if pair == "XAUUSD":
+        return 100.0
+    cfg = PAIR_CONFIG.get(pair)
+    if cfg is not None and cfg.get("category") == "Index":
+        return 20_000.0
+    return 1.10000
 
 
 def hour_msc(year: int, month: int, day: int, hour: int, minute: int = 0) -> int:

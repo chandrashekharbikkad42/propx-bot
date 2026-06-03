@@ -165,7 +165,9 @@ def test_rr_ratio_holds(risk, rr):
     "USDCHF", "AUDCHF", "AUDNZD",
 ])
 @pytest.mark.parametrize("equity", [1_000.0, 10_000.0, 100_000.0, 1_000_000.0])
-@pytest.mark.parametrize("sl_mult", [1, 10, 100])
+# sl_mult is the SL distance in pips (pt*10 = 1 pip). All values are >= the
+# 5-pip MIN_SL_DISTANCE_PIPS floor so sizing returns a real lot, not a reject.
+@pytest.mark.parametrize("sl_mult", [5, 10, 100])
 def test_size_position_grid(pair, equity, sl_mult):
     from config.asian_sweep_config import PAIR_CONFIG
     pt = float(PAIR_CONFIG[pair]["point"])

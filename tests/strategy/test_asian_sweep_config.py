@@ -32,7 +32,7 @@ from config.asian_sweep_config import (
 
 ALL_PAIRS = list(PAIRS)
 
-# Symbol families — the 14-pair universe mixes plain FX/metal symbols with
+# Symbol families — the 13-pair universe mixes plain FX/metal symbols with
 # index CFDs that follow a "<UPPER>.cash" convention and carry point=0.01.
 FX_PAIRS = [p for p in ALL_PAIRS if "." not in p]      # 6-char uppercase FX/metal
 INDEX_PAIRS = [p for p in ALL_PAIRS if "." in p]       # e.g. HK50.cash, GER40.cash
@@ -47,8 +47,9 @@ class TestPairsUniverse:
     def test_pairs_is_tuple(self):
         assert isinstance(PAIRS, tuple)
 
-    def test_pairs_count_fourteen(self):
-        assert len(PAIRS) == 14
+    def test_pairs_count_thirteen(self):
+        # 13-pair V5 universe after NZDUSD was dropped (slot-artifact).
+        assert len(PAIRS) == 13
 
     def test_pairs_unique(self):
         assert len(set(PAIRS)) == len(PAIRS)
@@ -79,7 +80,7 @@ class TestPairsUniverse:
     @pytest.mark.parametrize("expected", [
         "XAUUSD", "GBPUSD", "AUDUSD", "EURUSD",
         "USDCAD", "USDCHF", "AUDCHF", "AUDNZD",
-        "NZDUSD", "EURNZD", "GBPCAD", "GBPAUD",
+        "EURNZD", "GBPCAD", "GBPAUD",
         "HK50.cash", "GER40.cash",
     ])
     def test_each_expected_pair_present(self, expected):
@@ -398,7 +399,7 @@ EXPECTED_PAIR_VALUES = {
     "AUDCHF":     (0.00001,   8,    80,    150,   1800,  5,    "Cross"),
     "AUDNZD":     (0.00001,  12,    80,    150,   1800,  4,    "Cross"),
     # ── Extension pairs ────────────────────────────────────────────────
-    "NZDUSD":     (0.00001,   7,    80,    150,   1800,  7,    "Major"),
+    # NZDUSD removed from the V5 universe (slot-artifact; synced with backtest).
     "EURNZD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
     "GBPCAD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
     "GBPAUD":     (0.00001,  12,    80,    150,   1800,  8,    "Cross"),
@@ -542,8 +543,8 @@ class TestQualityRanking:
     def test_quality_within_1_10_band(self):
         # NOTE: the old "all majors outrank all crosses" invariant no longer
         # holds — extension crosses (EURNZD/GBPCAD/GBPAUD, q=8) outrank some
-        # majors (USDCAD/USDCHF/NZDUSD, q=7). Quality is a manual per-pair
-        # preference score, not a function of category in the 14-pair universe.
+        # majors (USDCAD/USDCHF, q=7). Quality is a manual per-pair
+        # preference score, not a function of category in the 13-pair universe.
         assert all(1 <= quality_for(p) <= 10 for p in ALL_PAIRS)
 
     def test_metals_top_quality(self):
@@ -575,7 +576,7 @@ class TestCrossInvariants:
 # ---------------------------------------------------------------------------
 # 9. Schema consistency — every PAIR_CONFIG entry carries the canonical keys
 #
-# Regression guard for the min_r/max_r/cat drift: six pairs (NZDUSD, EURNZD,
+# Regression guard for the min_r/max_r/cat drift: five extension pairs (EURNZD,
 # GBPCAD, GBPAUD, HK50.cash, GER40.cash) were copy-pasted from
 # multi_pair_backtest.SYMBOLS with the backtest's legacy key names. The
 # detector reads cfg["min_range_pts"]/["max_range_pts"] with a direct

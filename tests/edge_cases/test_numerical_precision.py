@@ -128,11 +128,13 @@ class TestSizePosition:
         lot = size_position("XAUUSD", equity=equity, sl_distance_price=1.0)
         assert lot >= 0.01
 
+    # XAUUSD pip = 0.1 (point 0.01 × 10), so SLs must be >= 0.5 (5 pips) to
+    # clear the intentional MIN_SL_DISTANCE_PIPS floor. Values span 5→100 pips.
     @pytest.mark.parametrize("sl,equity", [
-        (0.0001, 10_000.0),
-        (0.001, 10_000.0),
-        (0.01, 10_000.0),
+        (0.5, 10_000.0),
         (1.0, 10_000.0),
+        (5.0, 10_000.0),
+        (10.0, 10_000.0),
     ])
     def test_size_inversely_with_sl(self, sl, equity):
         lot = size_position("XAUUSD", equity=equity,
@@ -165,7 +167,9 @@ class TestSizePosition:
             assert risk_pct_for("XAUUSD") == 0.5
             assert risk_pct_for("EURUSD") == 0.8
 
-    @pytest.mark.parametrize("sl_dist", [0.001, 0.005, 0.01, 0.1, 1.0, 10.0])
+    # SLs >= 0.5 (5 XAUUSD pips) so the MIN_SL_DISTANCE_PIPS floor is cleared;
+    # still spans an order of magnitude to exercise the inverse scaling.
+    @pytest.mark.parametrize("sl_dist", [0.5, 1.0, 2.0, 5.0, 10.0, 50.0])
     def test_size_xau_scales_correctly(self, sl_dist):
         lot = size_position("XAUUSD", equity=10_000.0,
                               sl_distance_price=sl_dist)
@@ -386,18 +390,19 @@ def test_zero_sl_in_size_position():
 
 
 def test_size_with_subpoint_sl():
-    """SL distance smaller than 1 point — risk_pts_count < 1."""
+    """SL distance smaller than 1 point — below the MIN_SL_DISTANCE_PIPS
+    floor, so it is rejected (returns 0.0) rather than blown up to lot_max.
+    This is the intentional guard closing the 'tiny SL ⇒ massive lots' hole."""
     lot = size_position("XAUUSD", equity=10_000.0,
                          sl_distance_price=PAIR_CONFIG["XAUUSD"]["point"] / 2)
-    # Tiny SL → huge lot calc → capped at lot_max.
-    assert lot == PAIR_CONFIG["XAUUSD"]["lot_max"]
+    assert lot == 0.0
 
 
 def test_size_with_epsilon_sl():
-    """SL ~ float epsilon — degenerate."""
+    """SL ~ float epsilon — degenerate, well under the MIN floor → rejected."""
     lot = size_position("XAUUSD", equity=10_000.0,
                          sl_distance_price=1e-15)
-    assert lot == PAIR_CONFIG["XAUUSD"]["lot_max"]
+    assert lot == 0.0
 
 
 # ===========================================================================
@@ -490,7 +495,9 @@ def test_compute_pnl_tp2_matches_rr(rr):
 @given(
     equity=st.floats(min_value=10.0, max_value=10_000_000.0,
                      allow_nan=False, allow_infinity=False),
-    sl_dist=st.floats(min_value=1e-5, max_value=100.0,
+    # XAUUSD pip = 0.1, so >= 0.5 keeps every sampled SL above the 5-pip
+    # MIN_SL_DISTANCE_PIPS floor where the 0.01..lot_max invariant holds.
+    sl_dist=st.floats(min_value=0.5, max_value=100.0,
                       allow_nan=False, allow_infinity=False),
 )
 def test_size_position_clamped(equity, sl_dist):

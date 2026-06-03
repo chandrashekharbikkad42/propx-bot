@@ -153,22 +153,25 @@ class TestResolveBaseRiskPct:
 
 class TestAsianSweepLotsFor:
     def test_eurusd_basic(self):
+        # Equity kept at 20k so the $100 risk stays under the $150
+        # MAX_RISK_USD_PER_TRADE cap and the raw formula passes through.
         lots = asian_sweep_lots_for(
-            risk_pct=0.5, equity=100_000.0,
+            risk_pct=0.5, equity=20_000.0,
             sl_distance_price=0.0010,  # 10 pips
             symbol="EURUSD",
         )
-        # risk_amt = 500. risk_pts = 100. vpl = 1 USD/lot/pt → 5 lots.
-        assert lots == pytest.approx(5.0, abs=0.01)
+        # risk_amt = 100. risk_pts = 100. vpl = 1 USD/lot/pt → 1.0 lot.
+        assert lots == pytest.approx(1.0, abs=0.01)
 
     def test_xauusd_basic(self):
-        # XAUUSD: pt=0.01, contract=100 oz, vpl=1.0
+        # XAUUSD: pt=0.01, contract=100 oz, vpl=1.0. Equity 20k → $100 risk,
+        # under the $150 cap so the formula result is not scaled down.
         lots = asian_sweep_lots_for(
-            risk_pct=0.5, equity=100_000.0,
-            sl_distance_price=5.0,    # $5 SL
+            risk_pct=0.5, equity=20_000.0,
+            sl_distance_price=1.0,    # $1 SL = 10 pips
             symbol="XAUUSD",
         )
-        # risk_amt = 500, risk_pts = 500, vpl=1 → 1.0 lot
+        # risk_amt = 100, risk_pts = 100, vpl=1 → 1.0 lot
         assert lots == pytest.approx(1.0, abs=0.01)
 
     def test_unknown_symbol_returns_min(self):
@@ -199,33 +202,42 @@ class TestAsianSweepLotsFor:
         )
         assert lots == 0.01
 
-    def test_lots_capped_at_lot_max(self):
-        # Extreme: huge equity → would otherwise produce 100 lots,
-        # but EURUSD lot_max = 50.
+    def test_lots_capped(self):
+        # Extreme: huge equity would otherwise produce 100s of lots. The
+        # $150 MAX_RISK_USD_PER_TRADE cap now binds tighter than EURUSD
+        # lot_max (50) — for a 10-pip SL (risk_pts=100, vpl=1) the ceiling
+        # is 150/100 = 1.5 lots. Result stays well within lot_max.
         lots = asian_sweep_lots_for(
             risk_pct=10.0, equity=1_000_000_000.0,
             sl_distance_price=0.0010, symbol="EURUSD",
         )
-        assert lots == 50.0
+        assert lots == pytest.approx(1.5, abs=0.01)
+        assert lots <= 50.0
 
     @pytest.mark.parametrize("sym", [
         "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD",
         "USDCAD", "USDCHF", "AUDCHF", "AUDNZD",
     ])
     def test_all_v5_pairs_yield_positive(self, sym):
+        from config.asian_sweep_config import PAIR_CONFIG
+        # Per-symbol 10-pip SL (point*100) clears the 5-pip MIN floor for
+        # XAUUSD too (its point=0.01 makes a flat 0.001 sub-floor).
+        sl = float(PAIR_CONFIG[sym]["point"]) * 100
         lots = asian_sweep_lots_for(
             risk_pct=0.5, equity=100_000.0,
-            sl_distance_price=0.001, symbol=sym,
+            sl_distance_price=sl, symbol=sym,
         )
         assert lots > 0
 
     @pytest.mark.parametrize("risk_pct,equity,expected_lots", [
-        (0.5, 50_000, 2.5),
-        (1.0, 50_000, 5.0),
-        (1.0, 100_000, 10.0),
+        (0.5, 10_000, 0.5),   # $50 risk
+        (1.0, 10_000, 1.0),   # $100 risk
+        (1.0, 15_000, 1.5),   # $150 risk — exactly at the cap, un-scaled
     ])
     def test_lots_scale_with_risk_and_equity(self, risk_pct, equity,
                                               expected_lots):
+        # All scenarios keep risk <= the $150 MAX_RISK cap so the raw
+        # risk-% × equity scaling is what drives the lot count.
         lots = asian_sweep_lots_for(
             risk_pct=risk_pct, equity=equity,
             sl_distance_price=0.0010, symbol="EURUSD",
@@ -699,7 +711,9 @@ class TestAdmissionGates:
                        allow_nan=False, allow_infinity=False),
     equity=st.floats(min_value=1000.0, max_value=1_000_000.0,
                      allow_nan=False, allow_infinity=False),
-    sl_pips=st.integers(min_value=1, max_value=500),
+    # sl in broker points (1 pip = 10 points). >= 50 keeps every sampled SL
+    # above the 5-pip MIN_SL_DISTANCE_PIPS floor so a real lot is returned.
+    sl_pips=st.integers(min_value=50, max_value=500),
 )
 def test_lots_non_negative_property(risk_pct, equity, sl_pips):
     lots = asian_sweep_lots_for(

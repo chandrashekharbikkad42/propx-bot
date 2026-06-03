@@ -18,7 +18,7 @@ from strategy.patterns.asian_sweep import (
 from strategy.patterns.base import MarketContext
 
 from tests.strategy.fixtures.synthetic_bars import (
-    build_scenario, hour_msc, long_sweep_bars, make_bar,
+    baseline_low, build_scenario, hour_msc, long_sweep_bars, make_bar,
 )
 
 UTC = timezone.utc
@@ -196,7 +196,7 @@ class TestRangeFilterAcceptance:
         pt = float(cfg["point"])
         min_r = float(cfg["min_range_pts"])
         range_pts = min_r + 50.0
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -212,7 +212,7 @@ class TestRangeFilterAcceptance:
         min_r = float(cfg["min_range_pts"])
         max_r = float(cfg["max_range_pts"])
         range_pts = (min_r + max_r) / 2.0
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -234,7 +234,7 @@ class TestRangeFilterRejection:
         pt = float(cfg["point"])
         min_r = float(cfg["min_range_pts"])
         range_pts = max(1.0, min_r - 50.0)
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -249,7 +249,7 @@ class TestRangeFilterRejection:
         pt = float(cfg["point"])
         max_r = float(cfg["max_range_pts"])
         range_pts = max_r + 50.0
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -271,7 +271,7 @@ class TestRangeFilterBoundaries:
         cfg = PAIR_CONFIG[pair]
         pt = float(cfg["point"])
         min_r = float(cfg["min_range_pts"])
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + min_r * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -285,7 +285,7 @@ class TestRangeFilterBoundaries:
         cfg = PAIR_CONFIG[pair]
         pt = float(cfg["point"])
         max_r = float(cfg["max_range_pts"])
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + max_r * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -299,7 +299,7 @@ class TestRangeFilterBoundaries:
         cfg = PAIR_CONFIG[pair]
         pt = float(cfg["point"])
         min_r = float(cfg["min_range_pts"])
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         # min - 1 pt: rng_pts rounded should land at min-1 → reject
         asian_high = asian_low + (min_r - 1) * pt
         bars = long_sweep_bars(
@@ -313,7 +313,7 @@ class TestRangeFilterBoundaries:
         cfg = PAIR_CONFIG[pair]
         pt = float(cfg["point"])
         max_r = float(cfg["max_range_pts"])
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + (max_r + 1) * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -405,7 +405,7 @@ class TestHelperPlacesRangeBars:
         cfg = PAIR_CONFIG[pair]
         range_pts = (float(cfg["min_range_pts"])
                      + float(cfg["max_range_pts"])) / 2.0
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         from tests.strategy.fixtures.synthetic_bars import build_scenario
         bars = build_scenario(
@@ -468,7 +468,7 @@ class TestPerPairMinRangeMatrix:
         range_pts = min_r + slack
         if range_pts > max_r:
             pytest.skip("slack would push past max")
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,
@@ -500,7 +500,7 @@ class TestPerPairMaxRangeMatrix:
         range_pts = max_r + slack
         if range_pts < min_r:
             pytest.skip("slack would push below min")
-        asian_low = 100.0 if pair == "XAUUSD" else 1.10000
+        asian_low = baseline_low(pair)
         asian_high = asian_low + range_pts * pt
         bars = long_sweep_bars(
             symbol=pair, pt=pt,

@@ -29,6 +29,8 @@ from risk.asian_sweep_exit import (
 )
 from strategy.patterns.base import Direction, Grade, PatternSignal
 
+from tests.strategy.fixtures.synthetic_bars import baseline_low
+
 
 ALL_PAIRS = list(PAIRS)
 
@@ -573,8 +575,12 @@ class TestSizePosition:
     @pytest.mark.parametrize("pair", ALL_PAIRS)
     def test_min_lots_floor(self, pair):
         """A tiny risk budget should never go below 0.01 lots."""
+        # 100-pip SL (1 pip = 10 broker points): realistic per-pair distance
+        # that clears the MIN floor without tripping the MAX-USD-risk cap
+        # (a flat 1000.0 price distance is ~100M pips on 5-digit FX).
+        pt = float(PAIR_CONFIG[pair]["point"])
         lot = size_position(pair, equity=1.0,
-                            sl_distance_price=1000.0)
+                            sl_distance_price=pt * 1000)
         assert lot >= 0.01
 
     @pytest.mark.parametrize("pair", ALL_PAIRS)
@@ -590,9 +596,9 @@ class TestSizePosition:
         be smaller than EURUSD for the same SL distance & equity."""
         lot_xau = size_position("XAUUSD", equity=10000.0,
                                 sl_distance_price=10.0)  # huge SL
-        # Use a tiny SL for EURUSD to keep both within lot_max.
+        # 10-pip SL for EURUSD (>= the 5-pip MIN floor) keeps the lot finite.
         lot_eur = size_position("EURUSD", equity=10000.0,
-                                sl_distance_price=0.0001)
+                                sl_distance_price=0.0010)
         # Just verify XAUUSD computed a finite > 0 lot — the relative
         # comparison is governed by different contract sizes.
         assert lot_xau > 0
@@ -601,9 +607,11 @@ class TestSizePosition:
     def test_weak_month_dampener(self):
         """Risk pct in WEAK_MONTHS is 0.3% (less than default 0.8% / XAU 0.5%)
         → lot in weak month is smaller than in non-weak month."""
-        big = size_position("EURUSD", equity=100_000.0,
+        # equity=10k keeps both un-capped by MAX_RISK_USD_PER_TRADE ($150),
+        # so the 0.3% vs 0.8% risk dampener is what drives the lot difference.
+        big = size_position("EURUSD", equity=10_000.0,
                             sl_distance_price=0.0010, month=6)
-        small = size_position("EURUSD", equity=100_000.0,
+        small = size_position("EURUSD", equity=10_000.0,
                               sl_distance_price=0.0010,
                               month=WEAK_MONTHS[0])
         assert small < big
@@ -634,7 +642,9 @@ class TestSizePosition:
 
 @pytest.mark.parametrize("pair", ALL_PAIRS)
 @pytest.mark.parametrize("equity", [500, 1_000, 5_000, 10_000, 100_000])
-@pytest.mark.parametrize("sl_mult", [10, 25, 50, 100, 250])
+# sl_mult is the SL distance in broker points; 1 pip = 10 points, so the
+# 5-pip MIN_SL_DISTANCE_PIPS floor = 50 points. All values clear it.
+@pytest.mark.parametrize("sl_mult", [50, 100, 150, 250, 500])
 def test_size_position_finite_per_pair(pair, equity, sl_mult, request):
     pt = float(PAIR_CONFIG[pair]["point"])
     sl_distance = sl_mult * pt
@@ -698,7 +708,7 @@ def test_pnl_full_loss_long_property(entry, risk_p, lots):
 @pytest.mark.parametrize("pair", ALL_PAIRS)
 def test_long_full_lifecycle_reaches_tp2(pair):
     pt = float(PAIR_CONFIG[pair]["point"])
-    entry = 100.0 if pair == "XAUUSD" else 1.10000
+    entry = baseline_low(pair)
     risk_p = 50 * pt
     sig = _signal(symbol=pair, entry=entry, risk_price=risk_p)
     s = init_exit_state(position_id="x", signal=sig, lots=0.50)
@@ -721,7 +731,7 @@ def test_long_full_lifecycle_reaches_tp2(pair):
 @pytest.mark.parametrize("pair", ALL_PAIRS)
 def test_short_full_lifecycle_reaches_tp2(pair):
     pt = float(PAIR_CONFIG[pair]["point"])
-    entry = 100.0 if pair == "XAUUSD" else 1.10000
+    entry = baseline_low(pair)
     risk_p = 50 * pt
     sig = _short_signal(symbol=pair, entry=entry, risk_price=risk_p)
     s = init_exit_state(position_id="x", signal=sig, lots=0.50)
@@ -744,7 +754,7 @@ def test_short_full_lifecycle_reaches_tp2(pair):
 @pytest.mark.parametrize("pair", ALL_PAIRS)
 def test_long_sl_then_no_partial(pair):
     pt = float(PAIR_CONFIG[pair]["point"])
-    entry = 100.0 if pair == "XAUUSD" else 1.10000
+    entry = baseline_low(pair)
     risk_p = 50 * pt
     sig = _signal(symbol=pair, entry=entry, risk_price=risk_p)
     s = init_exit_state(position_id="x", signal=sig, lots=0.50)

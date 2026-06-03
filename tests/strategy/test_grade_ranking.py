@@ -21,14 +21,14 @@ from strategy.patterns.asian_sweep import (
 from strategy.patterns.base import Direction, Grade, MarketContext
 
 from tests.strategy.fixtures.synthetic_bars import (
-    long_sweep_bars, short_sweep_bars,
+    baseline_low, long_sweep_bars, short_sweep_bars,
 )
 
 ALL_PAIRS = list(PAIRS)
 
 
 def _baseline_low(pair: str) -> float:
-    return 100.0 if pair == "XAUUSD" else 1.10000
+    return baseline_low(pair)
 
 
 def _baseline_range_pts(pair: str) -> float:
@@ -630,6 +630,9 @@ class TestBuildSignalValidation:
 def test_majority_grade_b_pairs():
     grade_a = sum(1 for p in ALL_PAIRS if PAIR_CONFIG[p]["quality"] >= 9)
     grade_b = sum(1 for p in ALL_PAIRS if PAIR_CONFIG[p]["quality"] < 9)
-    # V5 has 3 A-grade (XAU q10, EUR q9, AUD q9) and 5 B-grade.
-    assert grade_a == 3
-    assert grade_b == 5
+    # V5 13-pair universe: 4 A-grade (XAU q10, EUR q9, AUD q9, HK50 q9) and
+    # 9 B-grade — Grade.B stays the dominant bucket.
+    assert grade_a == 4
+    assert grade_b == 9
+    assert grade_a + grade_b == len(ALL_PAIRS)
+    assert grade_b > grade_a

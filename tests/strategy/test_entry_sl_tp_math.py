@@ -28,7 +28,7 @@ from strategy.patterns.asian_sweep import AsianSweepDetector
 from strategy.patterns.base import Direction, MarketContext
 
 from tests.strategy.fixtures.synthetic_bars import (
-    build_scenario, long_sweep_bars, short_sweep_bars,
+    baseline_low, build_scenario, long_sweep_bars, short_sweep_bars,
 )
 
 
@@ -36,7 +36,7 @@ ALL_PAIRS = list(PAIRS)
 
 
 def _baseline_low(pair: str) -> float:
-    return 100.0 if pair == "XAUUSD" else 1.10000
+    return baseline_low(pair)
 
 
 def _baseline_range_pts(pair: str) -> float:

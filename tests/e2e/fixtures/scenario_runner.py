@@ -349,6 +349,14 @@ _PAIR_PRICE_ANCHORS: Dict[str, Tuple[float, float]] = {
     "USDCHF": (0.91000, 0.91500),
     "AUDCHF": (0.59000, 0.59500),
     "AUDNZD": (1.08000, 1.08500),
+    # Extension crosses — real-scale anchors (500 pts at pt=0.00001).
+    "EURNZD": (1.80000, 1.80500),
+    "GBPCAD": (1.70000, 1.70500),
+    "GBPAUD": (1.90000, 1.90500),
+    # Index CFDs — point=0.01, sl_pts=2000 (=20 index pts), so an FX-scale
+    # anchor would drive SL negative. Real price scale, 500-pt range.
+    "HK50.cash": (20000.00, 20005.00),
+    "GER40.cash": (18000.00, 18005.00),
 }
 
 

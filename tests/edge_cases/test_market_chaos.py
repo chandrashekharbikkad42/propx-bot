@@ -731,7 +731,9 @@ def test_bar_range_is_nonnegative_for_self_consistent_bars(open_p, span):
 @given(
     equity=st.floats(min_value=100.0, max_value=10_000_000.0, allow_nan=False,
                      allow_infinity=False),
-    sl_dist=st.floats(min_value=0.0001, max_value=100.0, allow_nan=False,
+    # XAUUSD pip = 0.1, so >= 0.5 keeps every sampled SL above the 5-pip
+    # MIN_SL_DISTANCE_PIPS floor where the 0.01..lot_max invariant holds.
+    sl_dist=st.floats(min_value=0.5, max_value=100.0, allow_nan=False,
                       allow_infinity=False),
 )
 def test_size_position_invariants(equity, sl_dist):
@@ -1072,7 +1074,11 @@ def test_size_position_caps_at_lot_max():
 @pytest.mark.parametrize("symbol", ["XAUUSD", "EURUSD", "GBPUSD", "AUDUSD",
                                     "USDCAD", "USDCHF", "AUDCHF", "AUDNZD"])
 def test_size_position_each_pair_returns_at_least_min(symbol):
-    lot = size_position(symbol, equity=10_000.0, sl_distance_price=0.0001)
+    from config.asian_sweep_config import PAIR_CONFIG
+    # 10-pip SL (1 pip = 10 broker points) — clears the 5-pip MIN floor for
+    # every symbol regardless of its point size.
+    pt = float(PAIR_CONFIG[symbol]["point"])
+    lot = size_position(symbol, equity=10_000.0, sl_distance_price=pt * 100)
     assert lot >= 0.01
 
 
