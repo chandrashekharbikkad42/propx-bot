@@ -189,12 +189,13 @@ class AsianSweepLiveEngine:
         self._equity_hwm: Optional[float] = None
         # V5 trade-admission ledger — mirrors the backtest's daily picker:
         #   - one open position per symbol at a time (no pyramiding);
-        #   - max 1 trade per (symbol, direction) per IST trade-day
-        #     ("1 per direction/day").
+        #   - max 1 trade per direction per IST trade-day, globally across
+        #     all symbols ("1 LONG + 1 SHORT max/day"). The backtest's
+        #     `dirs_used` dedup keys on direction alone, not (symbol,dir).
         # The daily 2-trade cap stays owned by the daily_trade_cap_reached gate
         # below / HouseMoneyManager — this ledger is the per-direction layer.
         # Reset on IST day-roll at the top of process_scan_cycle.
-        self._traded_today: set[tuple[str, Direction]] = set()
+        self._traded_today: set[Direction] = set()
         self._traded_today_day: Optional[str] = None
 
     @property
@@ -319,10 +320,11 @@ class AsianSweepLiveEngine:
                 )
                 continue
 
-            # V5 admission gate #2 — 1 trade per (symbol, direction) per day.
-            # Mirrors the backtest's "max 1 per direction" daily picker so a
-            # repeated same-direction signal can't open a second order.
-            dir_key = (symbol, signal.direction)
+            # V5 admission gate #2 — 1 trade per direction per day, globally
+            # across all symbols. Mirrors the backtest's "max 1 per direction"
+            # daily picker (dedup on direction alone) so a second same-direction
+            # signal — on this or any other symbol — can't open another order.
+            dir_key = signal.direction
             if dir_key in self._traded_today:
                 report.signals_rejected_by_compliance += 1
                 report.rejections.append(

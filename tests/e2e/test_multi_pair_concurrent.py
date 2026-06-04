@@ -25,19 +25,23 @@ from tests.e2e.fixtures.scenario_runner import (
 )
 
 
-def _sig(symbol: str, *, grade=Grade.A, confidence=0.9) -> PatternSignal:
+def _sig(symbol: str, *, grade=Grade.A, confidence=0.9,
+         direction: Direction = Direction.BUY) -> PatternSignal:
     pt = float(PAIR_CONFIG[symbol]["point"])
-    if symbol == "XAUUSD":
-        entry = 2000.00
-    else:
-        entry = 1.10000
+    # Big-point instruments (XAUUSD + index .cash pairs) need a price well above
+    # 2.5×risk so a SHORT's tp stays positive; FX pairs use a 1.1000 anchor.
+    entry = 2000.00 if pt >= 0.01 else 1.10000
     risk = 100 * pt
+    if direction == Direction.BUY:
+        sl, tp, sweep = entry - risk, entry + risk * 2.5, "asian_sweep_low"
+    else:
+        sl, tp, sweep = entry + risk, entry - risk * 2.5, "asian_sweep_high"
     return PatternSignal(
         pattern_name="ASIAN_SWEEP", symbol=symbol,
-        direction=Direction.BUY, entry=entry,
-        sl=entry - risk, tp=entry + risk * 2.5,
+        direction=direction, entry=entry,
+        sl=sl, tp=tp,
         confidence=confidence, grade=grade,
-        confluences_met=("asian_sweep_low", "LONDON", "bias_neutral",
+        confluences_met=(sweep, "LONDON", "bias_neutral",
                           "q9", f"tp1_{entry + risk:.5f}"),
         bar_time_msc=hour_msc(2026, 4, 15, 8),
     )
@@ -59,7 +63,9 @@ ALL_PAIR_COMBOS = list(combinations(PAIRS, 2))
 class TestTwoPairConcurrent:
     @pytest.mark.parametrize("p1,p2", ALL_PAIR_COMBOS)
     def test_two_pairs_both_open(self, p1, p2, runner_factory):
-        s1, s2 = _sig(p1), _sig(p2)
+        # Opposite directions — the 1-per-direction/day gate is global across
+        # symbols, so two same-direction pairs would cap at one.
+        s1, s2 = _sig(p1), _sig(p2, direction=Direction.SELL)
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, [s1, s2])
         r.run_cycle({p1: [], p2: []}, now_msc=s1.bar_time_msc,
@@ -71,7 +77,7 @@ class TestTwoPairConcurrent:
 
     @pytest.mark.parametrize("p1,p2", ALL_PAIR_COMBOS)
     def test_two_pairs_isolated_positions(self, p1, p2, runner_factory):
-        s1, s2 = _sig(p1), _sig(p2)
+        s1, s2 = _sig(p1), _sig(p2, direction=Direction.SELL)
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, [s1, s2])
         r.run_cycle({p1: [], p2: []}, now_msc=s1.bar_time_msc,
@@ -86,7 +92,7 @@ class TestTwoPairConcurrent:
 
     @pytest.mark.parametrize("p1,p2", ALL_PAIR_COMBOS)
     def test_two_pairs_each_recorded_in_daily_count(self, p1, p2, runner_factory):
-        s1, s2 = _sig(p1), _sig(p2)
+        s1, s2 = _sig(p1), _sig(p2, direction=Direction.SELL)
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, [s1, s2])
         r.run_cycle({p1: [], p2: []}, now_msc=s1.bar_time_msc,
@@ -142,11 +148,12 @@ class TestGlobalTradeCap:
 class TestPerPairBest:
     @pytest.mark.parametrize("p1,p2", ALL_PAIR_COMBOS[:14])
     def test_each_pair_keeps_own_best(self, p1, p2, runner_factory):
-        # Two signals per pair — only the best one each fires.
+        # Two signals per pair — only the best one each fires. Distinct
+        # directions per pair so both winners clear the global per-direction gate.
         sigs = []
-        for p in (p1, p2):
-            sigs.append(_sig(p, grade=Grade.B, confidence=0.5))
-            sigs.append(_sig(p, grade=Grade.A, confidence=0.9))
+        for p, d in ((p1, Direction.BUY), (p2, Direction.SELL)):
+            sigs.append(_sig(p, grade=Grade.B, confidence=0.5, direction=d))
+            sigs.append(_sig(p, grade=Grade.A, confidence=0.9, direction=d))
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, sigs)
         r.run_cycle({p1: [], p2: []}, now_msc=sigs[0].bar_time_msc,
@@ -171,11 +178,13 @@ class TestThreePairConcurrent:
         ("USDCAD", "USDCHF", "AUDCHF"),
     ])
     def test_three_pairs_clamped_to_two(self, p1, p2, p3, runner_factory):
-        """Phase 6 fix #4 — HouseMoneyManager caps trade_number_today at 2.
-        Three simultaneous signals → first 2 open, 3rd deferred as
-        `daily_trade_cap_reached` (engine no longer crashes mid-loop).
+        """Three simultaneous signals → first 2 open (1 LONG + 1 SHORT), 3rd
+        deferred. The global 1-per-direction/day gate is what clamps here: the
+        3rd signal repeats a direction already taken, so it's rejected with
+        `direction_already_traded_today` before reaching the trade-count cap.
         """
-        sigs = [_sig(p) for p in (p1, p2, p3)]
+        dirs = (Direction.BUY, Direction.SELL, Direction.BUY)
+        sigs = [_sig(p, direction=d) for p, d in zip((p1, p2, p3), dirs)]
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, sigs)
         r.run_cycle(
@@ -185,7 +194,7 @@ class TestThreePairConcurrent:
             bid_by_pair={p: s.entry for p, s in zip((p1, p2, p3), sigs)},
         )
         assert len(r.pm.open_positions) == 2
-        assert "daily_trade_cap_reached" in r.result.all_rejection_reasons
+        assert "direction_already_traded_today" in r.result.all_rejection_reasons
 
 
 # ===========================================================================
@@ -249,7 +258,7 @@ class TestIsolatedRejection:
 
 class TestPMForget:
     def test_forget_position_removes_only_one(self, runner_factory):
-        sigs = [_sig("EURUSD"), _sig("GBPUSD")]
+        sigs = [_sig("EURUSD"), _sig("GBPUSD", direction=Direction.SELL)]
         r = runner_factory(max_trades_per_day=10)
         _inject_signals(r, sigs)
         r.run_cycle({"EURUSD": [], "GBPUSD": []},
@@ -289,7 +298,12 @@ class TestEightPairCycle:
 
     def test_all_eight_canned_signals_clamps_to_two(self, runner_factory):
         r = runner_factory(max_trades_per_day=20)
-        sigs = [_sig(p) for p in PAIRS]
+        # Alternate directions: the global 1-per-direction/day gate fills the
+        # 1 LONG + 1 SHORT slots, then defers every further signal — regardless
+        # of trade-count cap, since both directions are already taken.
+        dirs = [Direction.BUY if i % 2 == 0 else Direction.SELL
+                for i in range(len(PAIRS))]
+        sigs = [_sig(p, direction=d) for p, d in zip(PAIRS, dirs)]
         _inject_signals(r, sigs)
         r.run_cycle(
             {p: [] for p in PAIRS},
@@ -298,10 +312,10 @@ class TestEightPairCycle:
             bid_by_pair={p: s.entry for p, s in zip(PAIRS, sigs)},
         )
         assert len(r.pm.open_positions) == 2
-        # The 6 deferred signals all carry the cap-reached reason.
-        cap_rejections = [r for r in r.result.all_rejection_reasons
-                           if r == "daily_trade_cap_reached"]
-        assert len(cap_rejections) == len(PAIRS) - 2
+        # The other signals are all deferred by the per-direction gate.
+        dir_rejections = [r for r in r.result.all_rejection_reasons
+                           if r == "direction_already_traded_today"]
+        assert len(dir_rejections) == len(PAIRS) - 2
 
 
 # ===========================================================================
@@ -318,8 +332,9 @@ class TestSequentialCycles:
         r.run_cycle({pair: []}, now_msc=s1.bar_time_msc,
                     ask_by_pair={pair: s1.entry},
                     bid_by_pair={pair: s1.entry})
-        # Second cycle: new pair signal.
-        s2 = _sig(other)
+        # Second cycle: new pair, opposite direction (same IST day, so the
+        # per-direction ledger still holds the BUY from cycle 1).
+        s2 = _sig(other, direction=Direction.SELL)
         _inject_signals(r, [s2])
         r.run_cycle({other: []}, now_msc=s2.bar_time_msc + 3_600_000,
                     ask_by_pair={other: s2.entry},

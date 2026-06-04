@@ -437,8 +437,10 @@ class TestCrossPairConcurrent:
     ])
     def test_two_pairs_each_get_order(self, p1, p2, runner_factory):
         from unittest.mock import MagicMock
+        # Opposite directions — the 1-per-direction/day gate is global across
+        # symbols, so two same-direction pairs would cap at one.
         s1 = _make_long_signal(p1)
-        s2 = _make_long_signal(p2)
+        s2 = _make_short_signal(p2)
         r = runner_factory(max_trades_per_day=10)
         r.scanner = MagicMock()
         r.scanner.scan_all = MagicMock(return_value=(s1, s2))

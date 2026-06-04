@@ -474,8 +474,10 @@ class TestBestPerPair:
 
 class TestMultiplePairs:
     def test_two_pairs_two_orders(self, engine_factory):
-        eu = make_signal(symbol="EURUSD")
-        gu = make_signal(symbol="GBPUSD")
+        # Opposite directions so both clear the global 1-per-direction/day gate
+        # (1 LONG + 1 SHORT max); two same-direction pairs would cap at one.
+        eu = make_signal(symbol="EURUSD", direction=Direction.BUY)
+        gu = make_signal_sell(symbol="GBPUSD")
         engine, mocks = engine_factory(scan_signals=[eu, gu])
         rep = run(engine.process_scan_cycle(
             bar_feeds={"EURUSD": [], "GBPUSD": []},
@@ -662,9 +664,9 @@ class TestAdmissionGates:
         mocks["router"].place_market.assert_awaited_once()
 
     def test_opposite_direction_still_allowed_same_day(self, engine_factory):
-        """1-per-direction is per (symbol, direction): a LONG then a SHORT on
-        the same symbol/day are both admissible (the 2-trade cap, not this
-        gate, is what limits the day)."""
+        """1-per-direction is keyed on direction alone, so a LONG then a SHORT
+        (here on the same symbol/day) are both admissible — they use different
+        directions (the 2-trade cap, not this gate, is what limits the day)."""
         engine, mocks = engine_factory(scan_signals=[])
         long_sig = make_signal(symbol="EURUSD", direction=Direction.BUY)
         short_sig = make_signal_sell(symbol="EURUSD")
@@ -679,6 +681,27 @@ class TestAdmissionGates:
         assert run(engine.process_scan_cycle(**common)).orders_placed == 1
         mocks["scanner"].scan_all = MagicMock(return_value=(short_sig,))
         assert run(engine.process_scan_cycle(**common)).orders_placed == 1
+
+    def test_same_direction_other_symbol_blocked(self, engine_factory):
+        """1-per-direction is global across symbols (matches the backtest's
+        `dirs_used` dedup): a LONG on EURUSD then a LONG on GBPUSD the same day
+        → the second is blocked by the per-direction ledger."""
+        engine, mocks = engine_factory(scan_signals=[])
+        eur_long = make_signal(symbol="EURUSD", direction=Direction.BUY)
+        gbp_long = make_signal(symbol="GBPUSD", direction=Direction.BUY)
+        common = dict(
+            bar_feeds={"EURUSD": [], "GBPUSD": []},
+            now_msc=1_700_000_000_000,
+            ask_by_pair={"EURUSD": 1.10010, "GBPUSD": 1.25010},
+            bid_by_pair={"EURUSD": 1.10000, "GBPUSD": 1.25000},
+            account=_acc(),
+        )
+        mocks["scanner"].scan_all = MagicMock(return_value=(eur_long,))
+        assert run(engine.process_scan_cycle(**common)).orders_placed == 1
+        mocks["scanner"].scan_all = MagicMock(return_value=(gbp_long,))
+        rep2 = run(engine.process_scan_cycle(**common))
+        assert rep2.orders_placed == 0
+        assert rep2.rejections[0][1] == "direction_already_traded_today"
 
     def test_direction_ledger_resets_next_ist_day(self, engine_factory):
         """The per-direction ledger rolls with the IST trade-day, so the same

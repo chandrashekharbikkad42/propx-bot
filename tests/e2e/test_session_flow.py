@@ -29,16 +29,21 @@ UTC = timezone.utc
 
 
 def _sig(symbol: str = "EURUSD", hour: int = 8, day: int = 15,
-          month: int = 4, year: int = 2026) -> PatternSignal:
+          month: int = 4, year: int = 2026,
+          direction: Direction = Direction.BUY) -> PatternSignal:
     pt = float(PAIR_CONFIG[symbol]["point"])
     entry = 1.10000 if symbol != "XAUUSD" else 2000.00
     risk = 100 * pt
+    if direction == Direction.BUY:
+        sl, tp, sweep = entry - risk, entry + risk * 2.5, "asian_sweep_low"
+    else:
+        sl, tp, sweep = entry + risk, entry - risk * 2.5, "asian_sweep_high"
     return PatternSignal(
         pattern_name="ASIAN_SWEEP", symbol=symbol,
-        direction=Direction.BUY, entry=entry,
-        sl=entry - risk, tp=entry + risk * 2.5,
+        direction=direction, entry=entry,
+        sl=sl, tp=tp,
         confidence=0.9, grade=Grade.A,
-        confluences_met=("asian_sweep_low", "LONDON", "bias_neutral", "q9",
+        confluences_met=(sweep, "LONDON", "bias_neutral", "q9",
                           f"tp1_{entry + risk:.5f}"),
         bar_time_msc=hour_msc(year, month, day, hour),
     )
@@ -247,13 +252,14 @@ class TestLondonThenNYSameDay:
         r.run_cycle({pair: []}, now_msc=s1.bar_time_msc,
                     ask_by_pair={pair: s1.entry},
                     bid_by_pair={pair: s1.entry})
-        # NY trade hours later. The second trade is on a DIFFERENT pair: V5 now
-        # blocks a 2nd order on a symbol that still has an open position
-        # (no pyramiding) and a 2nd same-direction order on the same symbol/day
-        # (1 per direction/day). A distinct pair sidesteps both guards, so the
-        # 2-trade/day cap is still what governs admission here.
+        # NY trade hours later. The second trade is on a DIFFERENT pair and the
+        # OPPOSITE direction: V5 blocks a 2nd order on a symbol that still has an
+        # open position (no pyramiding) and a 2nd same-direction order on any
+        # symbol/day (1 per direction/day, global). A distinct pair + opposite
+        # direction sidesteps both guards, so the 2-trade/day cap is what
+        # governs admission here.
         other = next(p for p in PAIRS if p != pair)
-        s2 = _sig(other, hour=13)
+        s2 = _sig(other, hour=13, direction=Direction.SELL)
         _inject(r, [s2])
         acct = r.account_with(trades_today=1)
         r.run_cycle({other: []}, now_msc=s2.bar_time_msc,
